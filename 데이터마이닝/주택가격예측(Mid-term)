@@ -1,0 +1,92 @@
+# 기타 패키지들
+install.packages("dplyr")
+install.packages("ggplot2")
+install.packages("lattice")
+install.packages("FSelector")
+install.packages("pastecs")
+install.packages("corrplot")
+library(FSelector)
+library(lattice)
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(pastecs)
+library(corrplot)
+# 1. 데이터 불러오기
+library(MASS) # Boston데이터를 포함함
+attach(Boston) # 이제 자유롭게 Dataset 사용 가능
+
+# 2. 데이터 기본 탐색
+stat.desc(Boston_df)
+Boston_df <- tbl_df(Boston) #dplyr제공 자료형태
+sum(is.na(Boston_df)) # 결측값은 없다.
+
+# 2-1. 데이터 시각화
+corrplot(cor(Boston_df),method=c("number")) #상관관계 행렬
+par(mfrow=c(2,2)) 
+plot(Boston_df$crim,Boston_df$medv) #범죄율
+plot(Boston_df$zn,Boston_df$medv) #대형 거주지비율
+plot(Boston_df$indus,Boston_df$medv) #비소매상업지역 토지비율
+plot(Boston_df$chas,Boston_df$medv) # 찰스강 근처 여부     
+plot.new()
+par(mfrow=c(2,2))
+plot(Boston_df$nox,Boston_df$medv) #일산화질소
+plot(Boston_df$rm,Boston_df$medv) #주택당 방의 평균 갯수
+plot(Boston_df$age,Boston_df$medv) # 1940이전에 건축된 소유자 주택비율
+plot(Boston_df$dis,Boston_df$medv) # 보스턴 고용센터 접근성 지수
+plot.new()
+par(mfrow=c(2,2)) 
+plot(Boston_df$rad,Boston_df$medv) # 방사형 도로까지 접근성
+plot(Boston_df$tax,Boston_df$medv) # 재산세율
+plot(Boston_df$ptratio,Boston_df$medv) # 타운별 학생/교사 비율
+plot(Boston_df$black,Boston_df$medv) # 타운별 흑인비율
+plot.new()
+par(mfrow=c(1,1))
+plot(Boston_df$lstat,Boston_df$medv) # 모집단 저소득층 비율
+# 결론 -> 전반적으로 medv==50인 곳에서 이상치로 의심되는 값이 많다.
+
+# 2-2. 변수 변환 및 이상치제거
+table(Boston_df$rad) #도로와의 거리변수는 1~8의 구간, 24구간으로 나뉜다.
+outlier <- c(which(Boston_df$rad>8 & Boston_df$medv==50))
+Boston_df[outlier,] #outlier 5개 존재.
+BostonOut <- Boston_df[-outlier,] # 이상치를 우선 제거하겠다.
+plot.new()
+par(mfrow=c(1,1))
+plot(BostonOut$rm,BostonOut$medv) #위의 제거과정을 통해 rm에 대해서도 이상치는 사라졌다.
+
+plot(BostonOut$chas,BostonOut$medv) #chas=1.0에서 동떨어진 두 값을 발견
+outlier <- c(which(BostonOut$chas==1 & BostonOut$medv>40))
+BostonOut <- BostonOut[-outlier,] # 총 4개의 outlier추가 제거
+
+str(BostonOut) # 506개 -> 497개
+
+#3. X,y // train , test 데이터 분리
+set.seed(611221)
+# 8:2비율 무작위 샘플링으로 분리하겠음
+train_idx <- sample(1:nrow(BostonOut),size=0.8*nrow(BostonOut),replace=F)
+test_idx <- (-train_idx)
+Boston_train <- Boston_df[train_idx,] # Outlier제거전
+Boston_test <- Boston_df[test_idx,]
+BostonOut_train <- BostonOut[train_idx,]
+BostonOut_test <- BostonOut[test_idx,]
+str(BostonOut_train) #397개  
+str(BostonOut_test)  #100개
+
+#4. 모델 수립
+
+#4-1) 다중 선형 회귀 모델 
+fit_case0 <- lm(formula = medv~., data=Boston_train) #아웃라이어 제거전
+fit_case1 <- lm(formula = medv~., data=BostonOut_train)
+summary(fit_case0)
+summary(fit_case1) 
+fit_test0 <- lm(formula = medv~., data=Boston_test)
+fit_test1 <- lm(formula = medv~., data=BostonOut_test)
+summary(fit_test0)
+summary(fit_test1) #Outler 제거후 설명력이 증대했으며 P계수도 양호하다.
+
+# RMSE비교
+before_Out <- c(sqrt(mean((fit_case0$residuals)^2)),sqrt(mean((fit_test0$residuals)^2)))
+after_Out <- c(sqrt(mean((fit_case1$residuals)^2)),sqrt(mean((fit_test1$residuals)^2)))
+before_Out #훈련set, 평가set
+after_Out # 훈련set, 평가set
+
