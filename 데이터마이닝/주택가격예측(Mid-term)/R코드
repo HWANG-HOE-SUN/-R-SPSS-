@@ -1,17 +1,15 @@
 # 기타 패키지들
 install.packages("dplyr")
-install.packages("ggplot2")
-install.packages("lattice")
-install.packages("FSelector")
 install.packages("pastecs")
 install.packages("corrplot")
-library(FSelector)
-library(lattice)
-library(dplyr)
-library(ggplot2)
+install.packages("car")
+install.packages("glmnet")
+library(glmnet)        #glm의 사용을 위함
+library(car)           #VIF(다중공선성)  
+library(dplyr)         #R분석용 데이터프레임 
+library(pastecs)       #stat.desc함수 위함
+library(corrplot)      #상관관계 그래프를 위함
 library(caret)
-library(pastecs)
-library(corrplot)
 # 1. 데이터 불러오기
 library(MASS) # Boston데이터를 포함함
 attach(Boston) # 이제 자유롭게 Dataset 사용 가능
@@ -20,10 +18,12 @@ attach(Boston) # 이제 자유롭게 Dataset 사용 가능
 stat.desc(Boston_df)
 Boston_df <- tbl_df(Boston) #dplyr제공 자료형태
 sum(is.na(Boston_df)) # 결측값은 없다.
+head(Boston_df)
 
-# 2-1. 데이터 시각화
+
+# 3. 데이터 시각화
 corrplot(cor(Boston_df),method=c("number")) #상관관계 행렬
-par(mfrow=c(2,2)) 
+par(mfrow=c(3,2)) 
 plot(Boston_df$crim,Boston_df$medv) #범죄율
 plot(Boston_df$zn,Boston_df$medv) #대형 거주지비율
 plot(Boston_df$indus,Boston_df$medv) #비소매상업지역 토지비율
@@ -36,7 +36,7 @@ plot(Boston_df$age,Boston_df$medv) # 1940이전에 건축된 소유자 주택비
 plot(Boston_df$dis,Boston_df$medv) # 보스턴 고용센터 접근성 지수
 plot.new()
 par(mfrow=c(2,2)) 
-plot(Boston_df$rad,Boston_df$medv) # 방사형 도로까지 접근성
+plot(Boston_df$rad,Boston_df$medv) # 방사형 도로까지 접근성(rad>8,medv=50구간에 이상치 존재)
 plot(Boston_df$tax,Boston_df$medv) # 재산세율
 plot(Boston_df$ptratio,Boston_df$medv) # 타운별 학생/교사 비율
 plot(Boston_df$black,Boston_df$medv) # 타운별 흑인비율
@@ -45,48 +45,152 @@ par(mfrow=c(1,1))
 plot(Boston_df$lstat,Boston_df$medv) # 모집단 저소득층 비율
 # 결론 -> 전반적으로 medv==50인 곳에서 이상치로 의심되는 값이 많다.
 
-# 2-2. 변수 변환 및 이상치제거
+# 4. 변수 변환 및 이상치제거
 table(Boston_df$rad) #도로와의 거리변수는 1~8의 구간, 24구간으로 나뉜다.
 outlier <- c(which(Boston_df$rad>8 & Boston_df$medv==50))
 Boston_df[outlier,] #outlier 5개 존재.
 BostonOut <- Boston_df[-outlier,] # 이상치를 우선 제거하겠다.
+
+plot(BostonOut$chas,BostonOut$medv) #chas=1.0에서 동떨어진 두 값을 발견
+outlier <- c(which(BostonOut$chas==1 & BostonOut$medv>40))
+BostonOut <- BostonOut[-outlier,] # 4개의 outlier추가 제거
+
 plot.new()
 par(mfrow=c(1,1))
 plot(BostonOut$rm,BostonOut$medv) #위의 제거과정을 통해 rm에 대해서도 이상치는 사라졌다.
 
-plot(BostonOut$chas,BostonOut$medv) #chas=1.0에서 동떨어진 두 값을 발견
-outlier <- c(which(BostonOut$chas==1 & BostonOut$medv>40))
-BostonOut <- BostonOut[-outlier,] # 총 4개의 outlier추가 제거
+str(BostonOut) # 변수갯수 506개 -> 497개
 
-str(BostonOut) # 506개 -> 497개
+# 4-1) Rad변수 변환 
+(Bostoncat <- data.frame(lvl=factor(Boston_df$rad),value=Boston_df$rad))#범주형 변환(One-Hot Encoding)
+BostonBinary = model.matrix(~ lvl, data=Bostoncat)[,-1] #첫번째 factor인 1을 제외하고 lvl에 대해 0,1로 전환한 matrix(모두0이면 rad=1이다.)
+colnames(BostonBinary)<-c('rad2','rad3','rad4','rad5','rad6','rad7','rad8','rad24')
 
-#3. X,y // train , test 데이터 분리
-set.seed(611221)
+(BostonOutcat <- data.frame(lvl=factor(BostonOut$rad),value=BostonOut$rad))#Outlier제거후 범주형변환
+BostonOutBinary = model.matrix(~ lvl, data=BostonOutcat)[,-1]
+colnames(BostonOutBinary)<-c('rad2','rad3','rad4','rad5','rad6','rad7','rad8','rad24')
+
+BostonTrans <- with(Boston_df,cbind(BostonBinary,lrad=log(rad),rm2=rm^2,nox2=nox^2,llstat=log(lstat),ldis=log(dis)))
+BostonTrans # 새로이 변환된 변수만을 포함하는 dataframe(논문기준 변환변수 추가)
+BostonOutTrans <- with(BostonOut,cbind(BostonOutBinary,lrad=log(rad),rm2=rm^2,nox2=nox^2,llstat=log(lstat),ldis=log(dis)))
+BostonOutTrans
+#변환 변수 포함 Dataframe 생성
+Boston_with_trans <- cbind(Boston_df,BostonTrans)
+BostonOut_with_trans <- cbind(BostonOut,BostonOutTrans)
+
+str(BostonOut_with_trans)
+# 5. train , test 데이터 분리
+set.seed(611221) # 난수 seed 고정
 # 8:2비율 무작위 샘플링으로 분리하겠음
 train_idx <- sample(1:nrow(BostonOut),size=0.8*nrow(BostonOut),replace=F)
 test_idx <- (-train_idx)
-Boston_train <- Boston_df[train_idx,] # Outlier제거전
-Boston_test <- Boston_df[test_idx,]
-BostonOut_train <- BostonOut[train_idx,]
-BostonOut_test <- BostonOut[test_idx,]
+Boston_train <- Boston_with_trans[train_idx,] # Outlier제거전
+Boston_test <- Boston_with_trans[test_idx,]
+BostonOut_train <- BostonOut_with_trans[train_idx,]
+BostonOut_test <- BostonOut_with_trans[test_idx,]
 str(BostonOut_train) #397개  
 str(BostonOut_test)  #100개
 
-#4. 모델 수립
-
-#4-1) 다중 선형 회귀 모델 
-fit_case0 <- lm(formula = medv~., data=Boston_train) #아웃라이어 제거전
-fit_case1 <- lm(formula = medv~., data=BostonOut_train)
+# 6. 모델 수립
+colnames(Boston_train) #현재 컬럼 목록
+#6-1) 다중 선형 회귀 모델 
+fit_case0 <- lm(formula = medv~.-rad-lrad, data=Boston_train) #아웃라이어 제거전 자료로 모델훈련
+fit_case1 <- lm(formula = medv~.-rad-lrad, data=BostonOut_train) #아웃라이어 제거후 자료로 모델훈련
 summary(fit_case0)
-summary(fit_case1) 
-fit_test0 <- lm(formula = medv~., data=Boston_test)
-fit_test1 <- lm(formula = medv~., data=BostonOut_test)
-summary(fit_test0)
-summary(fit_test1) #Outler 제거후 설명력이 증대했으며 P계수도 양호하다.
+summary(fit_case1)
+#Outlier 제거후 설명력이 증대했으며 모델의 P-value도 양호하다.
+#Outlier 제거한 Data를 기준으로 차후 모델을 세우겠음.
 
-# RMSE비교
-before_Out <- c(sqrt(mean((fit_case0$residuals)^2)),sqrt(mean((fit_test0$residuals)^2)))
-after_Out <- c(sqrt(mean((fit_case1$residuals)^2)),sqrt(mean((fit_test1$residuals)^2)))
-before_Out #훈련set, 평가set
-after_Out # 훈련set, 평가set
+# ★종속변수에 log를 취하는 경우는 실험을 위해 따로 모델을 저장하겠다★
+fit_logcase <- lm(formula = log(medv)~.-rad-lrad, data=BostonOut_train) #아웃라이어 제거후 자료로 모델훈련
+summary(fit_logcase)
 
+# 6-2)변수 선택(Feature Selection)
+m_both<-step(fit_case1,direction="both")
+m_for<-step(fit_case1,direction="forward")
+m_back<-step(fit_case1,direction="backward")
+summary(m_both)
+
+# 6-3) 릿지,라쏘 회귀
+x <- model.matrix(medv~., BostonOut_train)[,-1]
+y <- BostonOut_train$medv
+newrid <-glmnet(x,y,alpha=0,lambda=1.0813176)
+coef(newrid)
+x.test <- model.matrix(medv~., BostonOut_test)[,-1]
+predictions <- newrid %>% predict(x.test) %>% as.vector()
+data.frame(
+  RMSE = RMSE(predictions, BostonOut_test$medv),
+  Rsquare = R2(predictions, BostonOut_test$medv)
+)
+head(ridge)
+
+X <- model.matrix(medv~., BostonOut_train)[,-1]
+Y <- BostonOut_train$medv
+newrid_L <-glmnet(X,Y,alpha=1,lambda=cv_ridge$lambda.min)
+coef(newrid_L)
+X.test <- model.matrix(medv~., BostonOut_test)[,-1]
+predictions_L <- newrid_L %>% predict(X.test) %>% as.vector()
+data.frame(
+  RMSE = RMSE(predictions_L, BostonOut_test$medv),
+  Rsquare = R2(predictions_L, BostonOut_test$medv)
+)
+
+#아래껀 only 시각화 + cv용!
+ridge <- glmnet(as.matrix(BostonOut_train[,-14]),BostonOut_train[,14],alpha=0)
+cv_ridge <- cv.glmnet(as.matrix(BostonOut_train[,-14]),BostonOut_train[,14],alpha=0)
+plot(ridge)
+plot(cv_ridge)
+grid <- with(cv_ridge,seq(lambda.min,lambda.1se,length.out=5))
+ridge <- glmnet(as.matrix(BostonOut_train[,-14]),BostonOut_train[,14],alpha=0,lambda=grid)
+head(ridge)
+
+lasso <- glmnet(as.matrix(BostonOut_train[,-14]),BostonOut_train[,14],alpha=1)
+cv_lasso <- cv.glmnet(as.matrix(BostonOut_train[,-14]),BostonOut_train[,9],alpha=1)
+plot(lasso)
+plot(cv_lasso)
+grid2 <- with(cv_lasso,seq(from=lambda.min,by=lambda.1se,length.out=5))
+lasso <- glmnet(as.matrix(BostonOut_train[,-14]),BostonOut_train[,14],alpha=1,lambda=grid)
+head(lasso)
+
+# 7. 평가지표 비교(설명계수, RMSE)
+#실제 최종 모델 성능 확인 (test데이터에 대해서만 우선 보았음)
+# 종속변수 ln(medv) -모든 변수 사용
+res_log <- BostonOut_test$medv-exp(predict(fit_logcase,newdata=BostonOut_test))
+R_sqaure_log = 1-sum(res_log^2)/sum( (BostonOut_test$medv - mean(BostonOut_test$medv))^2)
+result_log = c(R_sqaure_log,sqrt(mean(res_log^2)))
+result_log
+# 종속변수 medv - StepWise사용
+res_final <- BostonOut_test$medv-predict(m_both,newdata=BostonOut_test)
+R_sqaure = 1-sum(res_final^2)/sum( (BostonOut_test$medv - mean(BostonOut_test$medv))^2)
+result = c(R_sqaure,sqrt(mean(res_final^2)))
+result
+# 종속변수 medv - 모든 변수 사용
+res_final_all <- BostonOut_test$medv-predict(fit_case1,newdata=BostonOut_test)
+R_sqaure = 1-sum(res_final_all^2)/sum( (BostonOut_test$medv - mean(BostonOut_test$medv))^2)
+result_all = c(R_sqaure,sqrt(mean(res_final_all^2)))
+result_all
+
+m_both
+
+plot(fit_logcase)
+plot(fit_case1)
+plot(m_both)
+
+# 다중공선성 확인 -> 제곱항에서 크게 나온다.
+vif(fit_logcase)
+vif(fit_case1)
+vif(m_both)
+
+Fortest_MultiL <- lm(formula = medv~., data=Boston_df) 
+vif(Fortest_MultiL)
+
+# +) 각종 검증용 코드
+#(Oulier제거의 유용성 입증용)-> 종속변수 medv, 모든 변수 사용 기준
+res_case0 <- Boston_test$medv-predict(fit_case0,newdata=Boston_test)
+res_case1 <- BostonOut_test$medv-predict(fit_case1,newdata=BostonOut_test)
+R_sqaure0 = 1-sum(res_case0^2)/sum( (Boston_test$medv - mean(Boston_test$medv))^2 )
+R_sqaure1 = 1-sum(res_case1^2)/sum( (BostonOut_test$medv - mean(BostonOut_test$medv))^2)
+before_Out <- c(R_sqaure0,sqrt(mean(res_case0^2)))
+after_Out <- c(R_sqaure1,sqrt(mean(res_case1^2)))
+before_Out # 설명력, RMSE                      
+after_Out # 
